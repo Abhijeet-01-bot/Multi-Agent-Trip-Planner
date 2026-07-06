@@ -1,0 +1,8 @@
+streamlit
+python-dotenv
+langgraph
+langchain
+langchain-google-genai
+requests
+certifi
+python-certifi-win32
