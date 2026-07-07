@@ -4,6 +4,7 @@ from datetime import datetime
 from utils.llm_config import invoke_llm_with_retry
 from utils.json_utils import extract_json_from_text
 from utils.logger_config import setup_logger
+from state.trip_state import state_to_dict
 
 
 logger = setup_logger(__name__)
@@ -228,6 +229,8 @@ def fallback_planner_output(state):
 
 
 def planner_agent(state):
+    state = state_to_dict(state)
+
     logger.info("Planner Agent executed")
 
     raw_user_input = state.get("raw_user_input", "")

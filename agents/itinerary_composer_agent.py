@@ -3,6 +3,7 @@
 from utils.llm_config import get_llm
 from utils.json_utils import extract_json_from_text
 from utils.logger_config import setup_logger
+from state.trip_state import state_to_dict
 
 
 logger = setup_logger(__name__)
@@ -22,6 +23,8 @@ def itinerary_composer_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     - Explain tradeoffs.
     - Present final response clearly.
     """
+
+    state = state_to_dict(state)
 
     logger.info("Itinerary Composer Agent executed")
 

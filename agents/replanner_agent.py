@@ -1,4 +1,5 @@
 ﻿from utils.logger_config import setup_logger
+from state.trip_state import state_to_dict
 
 
 logger = setup_logger(__name__)
@@ -15,6 +16,8 @@ def replanner_agent(state):
     - Shift travel style to budget-conscious.
     - Add a clear replanner_message for UI display.
     """
+
+    state = state_to_dict(state)
 
     logger.info("Replanner Agent executed")
 

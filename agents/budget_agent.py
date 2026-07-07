@@ -2,6 +2,7 @@
 
 from utils.mcp_client import call_budget
 from utils.logger_config import setup_logger
+from state.trip_state import state_to_dict
 
 
 logger = setup_logger(__name__)
@@ -18,6 +19,8 @@ def budget_agent(state):
     - Decide whether replanning is required.
     - Add replanner_message for UI explanation.
     """
+
+    state = state_to_dict(state)
 
     logger.info("Budget Agent executed")
 

@@ -1,40 +1,94 @@
-﻿from typing import TypedDict, List, Dict, Any, Optional
+﻿from typing import List, Dict, Any, Optional
+
+from pydantic import BaseModel, Field, ConfigDict
 
 
-class TripState(TypedDict, total=False):
+class TripState(BaseModel):
     """
-    Shared state used by all agents in the LangGraph workflow.
+    Shared Pydantic state used by all agents in the LangGraph workflow.
+
     Every agent reads from and writes back to this state.
+
+    This replaces the earlier TypedDict-based TripState while keeping
+    compatibility with existing code that uses state.get("field").
     """
 
-    raw_user_input: str
-    conversation_history: List[Dict[str, str]]
+    model_config = ConfigDict(
+        extra="allow",
+        arbitrary_types_allowed=True,
+    )
 
-    destination: Optional[str]
-    origin: Optional[str]
+    raw_user_input: Optional[str] = None
+    conversation_history: List[Dict[str, str]] = Field(default_factory=list)
 
-    dates: Optional[str]
-    start_date: Optional[str]
-    end_date: Optional[str]
-    month: Optional[str]
-    duration: Optional[int]
+    destination: Optional[str] = None
+    origin: Optional[str] = None
 
-    travelers: Optional[str]
-    number_of_people: Optional[int]
-    budget: Optional[int]
-    currency: str
-    travel_style: Optional[str]
-    preferences: List[str]
+    dates: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    month: Optional[str] = None
+    duration: Optional[int] = None
 
-    missing_fields: List[str]
-    weather_info: Dict[str, Any]
-    destination_plan: Dict[str, Any]
-    transport_plan: Dict[str, Any]
-    budget_plan: Dict[str, Any]
-    itinerary: Dict[str, Any]
+    travelers: Optional[str] = None
+    number_of_people: Optional[int] = None
+    budget: Optional[int] = None
+    currency: str = "INR"
+    travel_style: Optional[str] = None
+    preferences: List[str] = Field(default_factory=list)
 
-    needs_replanning: bool
-    replan_reason: Optional[str]
-    replan_count: int
+    missing_fields: List[str] = Field(default_factory=list)
 
-    final_answer: str
+    weather_info: Dict[str, Any] = Field(default_factory=dict)
+    destination_plan: Dict[str, Any] = Field(default_factory=dict)
+    transport_plan: Dict[str, Any] = Field(default_factory=dict)
+    budget_plan: Dict[str, Any] = Field(default_factory=dict)
+    itinerary: Dict[str, Any] = Field(default_factory=dict)
+
+    needs_replanning: bool = False
+    replan_reason: Optional[str] = None
+    replan_count: int = 0
+    replanner_message: Optional[str] = None
+
+    final_answer: Optional[str] = None
+
+    def get(self, key, default=None):
+        """
+        Provides dictionary-style access compatibility.
+
+        This allows existing agent code like:
+            state.get("destination")
+
+        to continue working even if state is a Pydantic object.
+        """
+
+        return getattr(self, key, default)
+
+    def to_dict(self):
+        """
+        Converts TripState into a normal Python dictionary.
+        """
+
+        return self.model_dump()
+
+
+def state_to_dict(state):
+    """
+    Safely converts state into a plain dictionary.
+
+    This helper allows your agents, graph routers, and app.py to work with:
+    - normal dict state
+    - Pydantic TripState state
+    - any object that supports model_dump()
+    """
+
+    if isinstance(state, TripState):
+        return state.model_dump()
+
+    if isinstance(state, dict):
+        return dict(state)
+
+    if hasattr(state, "model_dump"):
+        return state.model_dump()
+
+    return dict(state)

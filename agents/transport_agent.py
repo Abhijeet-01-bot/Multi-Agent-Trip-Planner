@@ -2,6 +2,7 @@ from typing import Dict, Any
 
 from tools.distance_tool import create_transport_strategy
 from utils.logger_config import setup_logger
+from state.trip_state import state_to_dict
 
 
 logger = setup_logger(__name__)
@@ -16,6 +17,8 @@ def transport_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     - Suggest realistic movement strategy
     - Group nearby activities
     """
+
+    state = state_to_dict(state)
 
     logger.info("Transport Agent executed")
 

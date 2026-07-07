@@ -1,6 +1,6 @@
 ﻿from langgraph.graph import StateGraph, END
 
-from state.trip_state import TripState
+from state.trip_state import TripState, state_to_dict
 
 from agents.planner_agent import planner_agent
 from agents.weather_agent import weather_agent
@@ -23,6 +23,8 @@ def should_continue_after_planner(state):
     If required fields are missing, graph ends and UI shows the missing-fields message.
     If no required fields are missing, graph moves to Weather Agent.
     """
+
+    state = state_to_dict(state)
 
     logger.info("=" * 60)
     logger.info("ROUTER: CHECKING STATE AFTER PLANNER")
@@ -58,6 +60,8 @@ def budget_router(state):
 
     Otherwise, route to Itinerary Composer Agent.
     """
+
+    state = state_to_dict(state)
 
     needs_replanning = state.get("needs_replanning", False)
     replan_count = state.get("replan_count", 0)

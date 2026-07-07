@@ -3,12 +3,15 @@ from typing import Dict, Any
 
 from utils.mcp_client import call_weather
 from utils.logger_config import setup_logger
+from state.trip_state import state_to_dict
 
 
 logger = setup_logger(__name__)
 
 
 def weather_agent(state: Dict[str, Any]):
+    state = state_to_dict(state)
+
     logger.info("Weather Agent executed")
 
     destination = state.get("destination")

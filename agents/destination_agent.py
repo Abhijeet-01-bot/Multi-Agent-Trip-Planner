@@ -3,6 +3,7 @@ from typing import Dict, Any
 from utils.llm_config import invoke_llm_with_retry
 from utils.json_utils import extract_json_from_text
 from utils.logger_config import setup_logger
+from state.trip_state import state_to_dict
 
 
 logger = setup_logger(__name__)
@@ -18,6 +19,8 @@ def destination_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     - Use weather information from MCP weather agent
     - Avoid risky or unsuitable activities
     """
+
+    state = state_to_dict(state)
 
     logger.info("Destination Agent executed")
 
