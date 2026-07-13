@@ -1,15 +1,24 @@
-﻿from langgraph.graph import StateGraph, END
+﻿from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
 
-from state.trip_state import TripState, state_to_dict
-
-from agents.planner_agent import planner_agent
-from agents.weather_agent import weather_agent
-from agents.destination_agent import destination_agent
-from agents.transport_agent import transport_agent
 from agents.budget_agent import budget_agent
+from agents.destination_agent import destination_agent
+from agents.human_review_agent import human_review_agent
+from agents.itinerary_composer_agent import (
+    itinerary_composer_agent,
+)
+from agents.planner_agent import planner_agent
 from agents.replanner_agent import replanner_agent
-from agents.itinerary_composer_agent import itinerary_composer_agent
-
+from agents.transport_agent import transport_agent
+from agents.weather_agent import weather_agent
+from memory.memory_agent import (
+    memory_retriever_agent,
+    memory_saver_agent,
+)
+from state.trip_state import (
+    TripState,
+    state_to_dict,
+)
 from utils.logger_config import setup_logger
 
 
@@ -17,99 +26,102 @@ logger = setup_logger(__name__)
 
 
 def should_continue_after_planner(state):
-    """
-    Decides whether the graph should continue after Planner Agent.
-
-    If required fields are missing, graph ends and UI shows the missing-fields message.
-    If no required fields are missing, graph moves to Weather Agent.
-    """
-
     state = state_to_dict(state)
 
-    logger.info("=" * 60)
-    logger.info("ROUTER: CHECKING STATE AFTER PLANNER")
-    logger.info("destination: %s", state.get("destination"))
-    logger.info("start_date: %s", state.get("start_date"))
-    logger.info("end_date: %s", state.get("end_date"))
-    logger.info("budget: %s", state.get("budget"))
-    logger.info("number_of_people: %s", state.get("number_of_people"))
-    logger.info("missing_fields: %s", state.get("missing_fields"))
-    logger.info("=" * 60)
-
-    missing_fields = state.get("missing_fields", [])
-
-    if missing_fields:
-        logger.warning(
-            "Graph stopped because required fields are missing: %s",
-            missing_fields,
-        )
-
+    if state.get("missing_fields"):
         return "end"
-
-    logger.info("Planner completed successfully. Moving to Weather Agent.")
 
     return "weather"
 
 
 def budget_router(state):
-    """
-    Decides whether the graph should go to Replanner Agent or Composer Agent.
-
-    If budget exceeds user budget and replanning count is less than 2,
-    route to Replanner Agent.
-
-    Otherwise, route to Itinerary Composer Agent.
-    """
-
     state = state_to_dict(state)
 
-    needs_replanning = state.get("needs_replanning", False)
-    replan_count = state.get("replan_count", 0)
+    if state.get("human_review_required"):
+        return "human_review"
 
-    logger.info("Budget router executed")
-    logger.info("needs_replanning: %s", needs_replanning)
-    logger.info("replan_count: %s", replan_count)
+    return "composer"
 
-    if needs_replanning and replan_count < 2:
-        logger.info("Budget router: sending plan to Replanner Agent.")
 
+def human_review_router(state):
+    state = state_to_dict(state)
+
+    action = state.get("human_decision")
+
+    if action == "approve_replan":
         return "replanner"
 
-    logger.info("Budget router: sending plan to Composer Agent.")
+    if action == "update_budget":
+        return "budget"
 
     return "composer"
 
 
 def build_trip_graph():
-    """
-    Builds and compiles the LangGraph workflow.
-
-    Workflow:
-    planner -> weather -> destination -> transport -> budget
-    budget -> replanner or composer
-    replanner -> transport -> budget
-    composer -> END
-    """
-
-    logger.info("Building Trip Graph")
+    logger.info(
+        "Building Trip Graph with human-in-the-loop review"
+    )
 
     graph_builder = StateGraph(TripState)
 
-    logger.info("Adding graph nodes")
+    graph_builder.add_node(
+        "memory_retriever",
+        memory_retriever_agent,
+    )
 
-    graph_builder.add_node("planner", planner_agent)
-    graph_builder.add_node("weather", weather_agent)
-    graph_builder.add_node("destination", destination_agent)
-    graph_builder.add_node("transport", transport_agent)
-    graph_builder.add_node("budget", budget_agent)
-    graph_builder.add_node("replanner", replanner_agent)
-    graph_builder.add_node("composer", itinerary_composer_agent)
+    graph_builder.add_node(
+        "planner",
+        planner_agent,
+    )
 
-    logger.info("Setting graph entry point to Planner Agent")
+    graph_builder.add_node(
+        "weather",
+        weather_agent,
+    )
 
-    graph_builder.set_entry_point("planner")
+    graph_builder.add_node(
+        "destination",
+        destination_agent,
+    )
 
-    logger.info("Adding conditional edge after Planner Agent")
+    graph_builder.add_node(
+        "transport",
+        transport_agent,
+    )
+
+    graph_builder.add_node(
+        "budget",
+        budget_agent,
+    )
+
+    graph_builder.add_node(
+        "human_review",
+        human_review_agent,
+    )
+
+    graph_builder.add_node(
+        "replanner",
+        replanner_agent,
+    )
+
+    graph_builder.add_node(
+        "composer",
+        itinerary_composer_agent,
+    )
+
+    graph_builder.add_node(
+        "memory_saver",
+        memory_saver_agent,
+    )
+
+    graph_builder.set_entry_point(
+        "memory_retriever"
+    )
+
+    graph_builder.add_edge(
+        "memory_retriever",
+        "planner",
+    )
 
     graph_builder.add_conditional_edges(
         "planner",
@@ -120,31 +132,66 @@ def build_trip_graph():
         },
     )
 
-    logger.info("Adding normal graph edges")
+    graph_builder.add_edge(
+        "weather",
+        "destination",
+    )
 
-    graph_builder.add_edge("weather", "destination")
-    graph_builder.add_edge("destination", "transport")
-    graph_builder.add_edge("transport", "budget")
+    graph_builder.add_edge(
+        "destination",
+        "transport",
+    )
 
-    logger.info("Adding conditional edge after Budget Agent")
+    graph_builder.add_edge(
+        "transport",
+        "budget",
+    )
 
     graph_builder.add_conditional_edges(
         "budget",
         budget_router,
         {
-            "replanner": "replanner",
+            "human_review": "human_review",
             "composer": "composer",
         },
     )
 
-    graph_builder.add_edge("replanner", "transport")
-    graph_builder.add_edge("composer", END)
+    graph_builder.add_conditional_edges(
+        "human_review",
+        human_review_router,
+        {
+            "replanner": "replanner",
+            "budget": "budget",
+            "composer": "composer",
+        },
+    )
 
-    logger.info("Compiling Trip Graph")
+    # The revised budget is created directly by Replanner.
+    # It then goes to Composer so the revised itinerary is displayed.
+    graph_builder.add_edge(
+        "replanner",
+        "composer",
+    )
 
-    compiled_graph = graph_builder.compile()
+    graph_builder.add_edge(
+        "composer",
+        "memory_saver",
+    )
 
-    logger.info("Trip Graph compiled successfully")
+    graph_builder.add_edge(
+        "memory_saver",
+        END,
+    )
+
+    checkpointer = MemorySaver()
+
+    compiled_graph = graph_builder.compile(
+        checkpointer=checkpointer,
+    )
+
+    logger.info(
+        "Trip Graph compiled successfully with HITL support"
+    )
 
     return compiled_graph
 

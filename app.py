@@ -1,14 +1,31 @@
-﻿import re
-import html
+﻿import html
+import re
+import uuid
+
 import streamlit as st
 from dotenv import load_dotenv
+from langgraph.types import Command
 
 from graph.trip_graph import trip_graph
+from memory.auth_manager import (
+    authenticate_user,
+    initialize_auth_table,
+    register_user,
+)
+from memory.memory_manager import (
+    create_user,
+    get_chat_history,
+    get_memories,
+    get_recent_trips,
+    save_chat_message,
+)
+from memory.memory_schema import initialize_database
 from state.trip_state import TripState, state_to_dict
 
 
-load_dotenv()
-
+# ==================================================
+# Application Configuration
+# ==================================================
 
 st.set_page_config(
     page_title="Multi-Agent Smart Trip Planner",
@@ -16,155 +33,144 @@ st.set_page_config(
     layout="wide",
 )
 
+load_dotenv()
+initialize_database()
+initialize_auth_table()
 
-# --------------------------------------------------
-# UI Styling - Simple Classic Bold Theme
-# --------------------------------------------------
+
+# ==================================================
+# UI Styling
+# ==================================================
+
 st.markdown(
     """
     <style>
     .stApp {
-        background: linear-gradient(135deg, #f8fafc 0%, #e0f2fe 45%, #ecfdf5 100%);
+        background: linear-gradient(135deg, #f8fafc 0%, #eef6ff 50%, #f0fdf4 100%);
         color: #111827;
     }
 
     .block-container {
-        padding-top: 1.5rem;
+        padding-top: 1.2rem;
         padding-bottom: 2rem;
         max-width: 1250px;
     }
 
     section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0b1f3a 0%, #123c69 55%, #0f766e 100%);
+        background: linear-gradient(180deg, #f8fafc 0%, #e0f2fe 55%, #dcfce7 100%);
+        border-right: 1px solid #cbd5e1;
     }
 
     section[data-testid="stSidebar"] * {
-        color: #ffffff !important;
+        color: #111827 !important;
     }
 
-    section[data-testid="stSidebar"] div[data-testid="stAlert"] {
-        background: rgba(255, 255, 255, 0.15) !important;
-        border: 1px solid rgba(255, 255, 255, 0.25) !important;
-        border-radius: 12px !important;
-    }
-
-    .hero-box {
-        background: linear-gradient(135deg, #0b1f3a 0%, #1d4ed8 55%, #0f766e 100%);
-        padding: 30px;
-        border-radius: 24px;
-        color: white;
-        box-shadow: 0 14px 34px rgba(15, 23, 42, 0.25);
-        margin-bottom: 18px;
-    }
-
-    .hero-title {
-        font-size: 38px;
-        font-weight: 900;
-        color: #ffffff;
-        margin-bottom: 8px;
-    }
-
-    .hero-subtitle {
-        font-size: 17px;
-        line-height: 1.7;
-        color: #e0f2fe;
-        max-width: 980px;
-    }
-
-    .quick-tip {
+    .main-header,
+    .auth-header,
+    .query-box,
+    .soft-card {
         background: #ffffff;
-        border-left: 7px solid #d97706;
-        border-radius: 16px;
-        padding: 16px 18px;
-        margin-bottom: 16px;
-        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.10);
-        color: #111827;
-        font-weight: 600;
-    }
-
-    .section-card {
-        background: #ffffff;
+        border: 1px solid #dbeafe;
         border-radius: 20px;
-        padding: 18px;
-        border: 1px solid #cbd5e1;
-        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.10);
+        padding: 20px;
+        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
         margin-bottom: 16px;
-        color: #111827;
     }
 
-    .blue-card {
-        border-left: 7px solid #1d4ed8;
+    .auth-header {
+        text-align: center;
+        max-width: 760px;
+        margin: 2rem auto 1.5rem auto;
     }
 
-    .green-card {
-        border-left: 7px solid #16a34a;
-    }
-
-    .red-card {
-        border-left: 7px solid #dc2626;
-    }
-
-    .gold-card {
-        border-left: 7px solid #d97706;
-    }
-
-    .card-title {
-        font-size: 19px;
+    .main-header h1,
+    .auth-header h1,
+    .soft-card-title,
+    .day-heading {
+        color: #1e3a8a;
         font-weight: 900;
-        color: #0b1f3a;
-        margin-bottom: 6px;
     }
 
-    .card-text {
-        font-size: 14.5px;
-        color: #334155;
-        line-height: 1.7;
-        font-weight: 550;
+    .main-header p,
+    .auth-header p,
+    .soft-card-text {
+        color: #475569;
+        line-height: 1.65;
     }
 
-    .missing-box {
+    .query-box {
+        border-left: 7px solid #3b82f6;
+    }
+
+    .soft-card {
+        min-height: 125px;
+    }
+
+    .process-complete,
+    .process-pending {
+        padding: 9px 11px;
+        border-radius: 10px;
+        margin-bottom: 7px;
+        font-weight: 700;
+    }
+
+    .process-complete {
+        background: #dcfce7;
+        border-left: 5px solid #16a34a;
+    }
+
+    .process-pending {
+        background: #f1f5f9;
+        border-left: 5px solid #94a3b8;
+    }
+
+    .review-box {
         background: #fff7ed;
-        border-left: 8px solid #ea580c;
+        border: 1px solid #fdba74;
+        border-left: 7px solid #f97316;
         border-radius: 18px;
         padding: 18px;
+        margin: 16px 0;
         color: #7c2d12;
-        box-shadow: 0 8px 20px rgba(124, 45, 18, 0.16);
-        margin-bottom: 16px;
     }
 
-    .missing-box h3 {
-        color: #7c2d12;
-        font-weight: 900;
-    }
-
-    .summary-box {
+    .replanned-box {
         background: #ecfdf5;
-        border-left: 8px solid #16a34a;
+        border: 1px solid #86efac;
+        border-left: 7px solid #16a34a;
         border-radius: 18px;
         padding: 18px;
+        margin: 16px 0;
         color: #14532d;
-        box-shadow: 0 8px 20px rgba(20, 83, 45, 0.16);
-        margin-bottom: 16px;
     }
 
-    .summary-box h3 {
-        color: #14532d;
-        font-weight: 900;
+    .memory-card {
+        background: rgba(255, 255, 255, 0.85);
+        border: 1px solid #bfdbfe;
+        border-radius: 12px;
+        padding: 10px 12px;
+        margin-bottom: 9px;
     }
 
-    .summary-box p {
-        color: #14532d;
+    .day-heading {
+        font-size: 21px;
+        margin-bottom: 4px;
+    }
+
+    .small-muted {
+        color: #64748b;
         font-weight: 600;
-        line-height: 1.7;
+        font-size: 14px;
+        margin-bottom: 10px;
     }
 
     div[data-testid="stMetric"] {
         background: #ffffff !important;
-        border: 1px solid #bfdbfe !important;
-        border-left: 6px solid #1d4ed8 !important;
+        border: 1px solid #dbeafe !important;
+        border-left: 5px solid #60a5fa !important;
         border-radius: 16px;
         padding: 14px;
-        box-shadow: 0 7px 18px rgba(15, 23, 42, 0.10);
+        box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
     }
 
     div[data-testid="stMetric"] * {
@@ -173,9 +179,7 @@ st.markdown(
 
     div[data-testid="stAlert"] {
         border-radius: 14px !important;
-        color: #111827 !important;
-        font-weight: 600 !important;
-        border: 1px solid #94a3b8 !important;
+        border: 1px solid #cbd5e1 !important;
     }
 
     div[data-testid="stAlert"] * {
@@ -183,44 +187,63 @@ st.markdown(
         font-weight: 600 !important;
     }
 
-    div[data-testid="stTabs"] {
-        background: #ffffff;
-        border-radius: 18px;
-        padding: 12px;
-        border: 1px solid #cbd5e1;
-        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.10);
-    }
-
-    div[data-testid="stChatMessage"] {
-        background: #ffffff;
-        border-radius: 18px;
-        border: 1px solid #cbd5e1;
-        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.09);
-        color: #111827;
-    }
-
-    div[data-testid="stChatMessage"] * {
-        color: #111827 !important;
-    }
-
-    .day-heading {
-        font-size: 22px;
-        font-weight: 900;
-        color: #0b1f3a;
-        margin-bottom: 4px;
-    }
-
-    .small-muted {
-        color: #475569;
-        font-weight: 600;
-        font-size: 14px;
-    }
-
+    div[data-testid="stChatMessage"],
+    div[data-testid="stTabs"],
     details {
         background: #ffffff !important;
+        border: 1px solid #dbeafe !important;
         border-radius: 14px !important;
-        border: 1px solid #cbd5e1 !important;
-        padding: 8px !important;
+    }
+
+    div[data-testid="stTextArea"] textarea,
+    div[data-testid="stTextInput"] input,
+    div[data-baseweb="input"] input,
+    div[data-baseweb="base-input"] input {
+        background: #ffffff !important;
+        color: #111827 !important;
+        caret-color: #2563eb !important;
+        cursor: text !important;
+        pointer-events: auto !important;
+        -webkit-text-fill-color: #111827 !important;
+        opacity: 1 !important;
+    }
+
+    div[data-testid="stTextArea"] textarea::placeholder,
+    div[data-testid="stTextInput"] input::placeholder {
+        color: #94a3b8 !important;
+        opacity: 1 !important;
+    }
+
+    label {
+        color: #111827 !important;
+        font-weight: 600 !important;
+    }
+
+    .stButton > button,
+    .stFormSubmitButton > button {
+        background: #2563eb !important;
+        color: #ffffff !important;
+        border: none !important;
+        border-radius: 10px !important;
+        font-weight: 700 !important;
+        min-height: 42px;
+    }
+
+    .stButton > button *,
+    .stFormSubmitButton > button * {
+        color: #ffffff !important;
+    }
+
+    .stButton > button:hover,
+    .stFormSubmitButton > button:hover {
+        background: #1d4ed8 !important;
+        color: #ffffff !important;
+    }
+
+    button[role="tab"],
+    button[role="tab"] * {
+        color: #1e3a8a !important;
+        font-weight: 700 !important;
     }
     </style>
     """,
@@ -228,37 +251,44 @@ st.markdown(
 )
 
 
-# --------------------------------------------------
+# ==================================================
 # Session State
-# --------------------------------------------------
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# ==================================================
 
-if "trip_state" not in st.session_state:
-    st.session_state.trip_state = TripState().model_dump()
+SESSION_DEFAULTS = {
+    "messages": [],
+    "authenticated": False,
+    "logged_in_user": None,
+    "trip_state": TripState().model_dump(),
+    "pending_review": None,
+    "graph_thread_id": None,
+}
+
+for session_key, default_value in SESSION_DEFAULTS.items():
+    if session_key not in st.session_state:
+        st.session_state[session_key] = default_value
 
 
-# --------------------------------------------------
-# Helper Functions
-# --------------------------------------------------
+# ==================================================
+# Utility Functions
+# ==================================================
+
 def clean_display_text(value):
     if value is None:
         return ""
 
     text = str(value)
+    previous_text = None
 
-    previous = None
-    while previous != text:
-        previous = text
+    while previous_text != text:
+        previous_text = text
         text = html.unescape(text)
 
     text = text.replace("<br>", "\n")
     text = text.replace("<br/>", "\n")
     text = text.replace("<br />", "\n")
-
     text = re.sub(r"<[^>]+>", "", text)
     text = text.replace("&nbsp;", " ")
-
     text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
     text = re.sub(r"[ \t]+", " ", text)
 
@@ -267,11 +297,7 @@ def clean_display_text(value):
 
 def safe_text(value, default="Not available"):
     cleaned = clean_display_text(value)
-
-    if cleaned == "":
-        return default
-
-    return cleaned
+    return cleaned if cleaned else default
 
 
 def safe_money(value):
@@ -280,589 +306,1359 @@ def safe_money(value):
 
     try:
         return f"{int(value):,}"
-    except Exception:
+    except (TypeError, ValueError):
         return str(value)
 
 
-def reset_trip_data_for_new_query():
-    st.session_state.trip_state = TripState().model_dump()
+def normalize_user_id(user_id):
+    return str(user_id or "").strip()
 
 
-def get_trip_completion_status(current_state):
-    missing_fields = current_state.get("missing_fields", [])
+def normalize_chat_rows(rows):
+    normalized = []
 
-    if missing_fields:
-        return "incomplete"
+    for row in rows or []:
+        if isinstance(row, dict):
+            role = row.get("role", "assistant")
+            content = row.get("message") or row.get("content") or ""
+        elif isinstance(row, (list, tuple)) and len(row) >= 2:
+            role = row[0]
+            content = row[1]
+        else:
+            continue
 
-    required_values = [
-        current_state.get("destination"),
-        current_state.get("start_date"),
-        current_state.get("end_date"),
-        current_state.get("number_of_people"),
-        current_state.get("budget"),
-    ]
+        if content:
+            normalized.append(
+                {
+                    "role": str(role),
+                    "content": str(content),
+                }
+            )
 
-    if all(required_values):
-        return "complete"
-
-    if current_state.get("destination"):
-        return "partial"
-
-    return "empty"
+    return normalized
 
 
-# --------------------------------------------------
-# Header and Sidebar
-# --------------------------------------------------
+def load_user_data(user_id, load_messages=True):
+    user_id = normalize_user_id(user_id)
+
+    if not user_id:
+        return
+
+    create_user(user_id)
+
+    previous_trips = get_recent_trips(user_id)
+    retrieved_memories = get_memories(user_id)
+    chat_rows = get_chat_history(user_id)
+
+    st.session_state.trip_state["user_id"] = user_id
+    st.session_state.trip_state["previous_trips"] = previous_trips
+    st.session_state.trip_state["retrieved_memories"] = retrieved_memories
+    st.session_state.trip_state["chat_history_db"] = chat_rows
+
+    if load_messages:
+        st.session_state.messages = normalize_chat_rows(chat_rows)
+
+
+def create_fresh_trip_state(preserve_memory=True):
+    user_id = st.session_state.logged_in_user or "default_user"
+    fresh_state = TripState().model_dump()
+    fresh_state["user_id"] = user_id
+
+    if preserve_memory:
+        fresh_state["previous_trips"] = get_recent_trips(user_id)
+        fresh_state["retrieved_memories"] = get_memories(user_id)
+        fresh_state["chat_history_db"] = get_chat_history(user_id)
+
+    st.session_state.trip_state = fresh_state
+
+
+def get_graph_config():
+    return {
+        "configurable": {
+            "thread_id": st.session_state.graph_thread_id,
+        }
+    }
+
+
+def extract_interrupt(result):
+    if not isinstance(result, dict):
+        return None
+
+    interrupts = result.get("__interrupt__", [])
+
+    if not interrupts:
+        return None
+
+    first_interrupt = interrupts[0]
+    return getattr(first_interrupt, "value", first_interrupt)
+
+
+def persist_assistant_result(user_id, result):
+    final_answer = (
+        result.get("final_answer")
+        or "Trip plan generated successfully."
+    )
+
+    assistant_message = {
+        "role": "assistant",
+        "content": final_answer,
+    }
+
+    st.session_state.messages.append(assistant_message)
+
+    save_chat_message(
+        user_id=user_id,
+        role="assistant",
+        message=final_answer,
+    )
+
+    load_user_data(user_id, load_messages=False)
+
+
+# ==================================================
+# Authentication UI
+# ==================================================
+
+def render_login_screen():
+    st.markdown(
+        """
+        <div class="auth-header">
+            <h1>✈️ Multi-Agent Smart Trip Planner</h1>
+            <p>Sign in to access your saved trips, preferences, and conversations.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    _, auth_column, _ = st.columns([1, 2, 1])
+
+    with auth_column:
+        login_tab, signup_tab = st.tabs(["🔑 Login", "🆕 Sign Up"])
+
+        with login_tab:
+            with st.form("login_form"):
+                login_user = st.text_input(
+                    "User ID",
+                    placeholder="Enter your user ID",
+                )
+                login_password = st.text_input(
+                    "Password",
+                    type="password",
+                    placeholder="Enter your password",
+                )
+                login_submitted = st.form_submit_button(
+                    "Login",
+                    use_container_width=True,
+                )
+
+            if login_submitted:
+                login_user = normalize_user_id(login_user)
+
+                if not login_user or not login_password:
+                    st.error("Please enter both User ID and password.")
+                elif authenticate_user(login_user, login_password):
+                    st.session_state.authenticated = True
+                    st.session_state.logged_in_user = login_user
+                    create_fresh_trip_state(preserve_memory=False)
+                    st.session_state.trip_state["user_id"] = login_user
+                    load_user_data(login_user, load_messages=True)
+                    st.session_state.pending_review = None
+                    st.session_state.graph_thread_id = None
+                    st.rerun()
+                else:
+                    st.error("Invalid User ID or password.")
+
+        with signup_tab:
+            with st.form("signup_form"):
+                signup_user = st.text_input(
+                    "Create User ID",
+                    placeholder="Choose a unique user ID",
+                )
+                signup_password = st.text_input(
+                    "Create Password",
+                    type="password",
+                    placeholder="At least 6 characters",
+                )
+                confirm_password = st.text_input(
+                    "Confirm Password",
+                    type="password",
+                    placeholder="Re-enter your password",
+                )
+                signup_submitted = st.form_submit_button(
+                    "Create Account",
+                    use_container_width=True,
+                )
+
+            if signup_submitted:
+                signup_user = normalize_user_id(signup_user)
+
+                if len(signup_user) < 3:
+                    st.error("User ID must contain at least 3 characters.")
+                elif len(signup_password) < 6:
+                    st.error("Password must contain at least 6 characters.")
+                elif signup_password != confirm_password:
+                    st.error("Passwords do not match.")
+                elif register_user(signup_user, signup_password):
+                    create_user(signup_user)
+                    st.success("Account created successfully. You can now log in.")
+                else:
+                    st.error("That User ID already exists.")
+
+
+# ==================================================
+# Main Header and Sidebar
+# ==================================================
+
 def render_header():
     st.markdown(
         """
-        <div class="hero-box">
-            <div class="hero-title">✈️ Multi-Agent Smart Trip Planner</div>
-            <div class="hero-subtitle">
-                A clean AI trip assistant that combines planning, live weather,
-                destination suggestions, transport strategy, budget estimation,
-                replanning, and final itinerary generation.
-            </div>
+        <div class="main-header">
+            <h1>✈️ Multi-Agent Smart Trip Planner</h1>
+            <p>
+                Weather-aware and budget-aware trip planning with persistent
+                memory and human approval for over-budget plans.
+            </p>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
-    st.markdown(
-        """
-        <div class="quick-tip">
-            💡 <b>Best input format:</b>
-            Plan a trip to Goa from 10 July 2026 to 14 July 2026 for a couple with budget 40000 INR.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.markdown(
-            """
-            <div class="section-card blue-card">
-                <div class="card-title">🧠 Planner</div>
-                <div class="card-text">Extracts destination, dates, people, budget, and missing fields.</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with col2:
-        st.markdown(
-            """
-            <div class="section-card green-card">
-                <div class="card-title">🌦️ Weather</div>
-                <div class="card-text">Uses MCP and OpenWeather to fetch live weather and forecast.</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with col3:
-        st.markdown(
-            """
-            <div class="section-card gold-card">
-                <div class="card-title">💰 Budget</div>
-                <div class="card-text">Estimates trip cost close to the user-entered budget.</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with col4:
-        st.markdown(
-            """
-            <div class="section-card red-card">
-                <div class="card-title">🔁 Replanner</div>
-                <div class="card-text">Adjusts the trip plan when budget or constraints need improvement.</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with st.expander("📘 How this assistant works"):
-        st.markdown(
-            """
-            1. **Planner Agent** extracts trip details from your message.  
-            2. **Weather Agent** fetches weather using MCP.  
-            3. **Destination Agent** chooses suitable activities.  
-            4. **Transport Agent** creates a practical movement strategy.  
-            5. **Budget Agent** calculates cost using MCP.  
-            6. **Replanner Agent** adjusts the plan if needed.  
-            7. **Composer Agent** prepares the final day-wise itinerary.
-            """
-        )
 
 
 def render_sidebar():
-    current_state = st.session_state.trip_state
-    status = get_trip_completion_status(current_state)
+    state = st.session_state.trip_state
 
     with st.sidebar:
-        st.title("🧭 Trip State")
+        st.subheader("👤 User Profile")
+        st.success(f"Logged in as: {st.session_state.logged_in_user}")
 
-        if status == "empty":
-            st.info("No trip planned yet. Enter a request to begin.")
+        refresh_col, reset_col = st.columns(2)
 
-        elif status in ["partial", "incomplete"]:
-            st.warning("Awaiting missing trip details.")
+        with refresh_col:
+            if st.button("↻ Refresh", use_container_width=True):
+                load_user_data(
+                    st.session_state.logged_in_user,
+                    load_messages=True,
+                )
+                st.rerun()
 
-            missing_fields = current_state.get("missing_fields", [])
+        with reset_col:
+            if st.button("Reset", use_container_width=True):
+                create_fresh_trip_state(preserve_memory=True)
+                st.session_state.pending_review = None
+                st.session_state.graph_thread_id = None
+                st.rerun()
 
-            if missing_fields:
-                st.write("Missing details:")
-                for field in missing_fields:
-                    st.write(f"• {safe_text(field)}")
+        st.divider()
+        st.subheader("🧩 Workflow")
 
-        else:
-            st.success("Trip details are complete.")
+        stages = [
+            (
+                "Memory Retriever",
+                bool(
+                    state.get("previous_trips")
+                    or state.get("retrieved_memories")
+                    or state.get("chat_history_db")
+                ),
+            ),
+            (
+                "Planner",
+                bool(state.get("destination") or state.get("missing_fields")),
+            ),
+            ("Weather", bool(state.get("weather_info"))),
+            ("Destination", bool(state.get("destination_plan"))),
+            ("Transport", bool(state.get("transport_plan"))),
+            ("Budget", bool(state.get("budget_plan"))),
+            (
+                "Human Review",
+                bool(
+                    state.get("human_decision")
+                    or st.session_state.pending_review
+                ),
+            ),
+            ("Composer", bool(state.get("itinerary"))),
+        ]
+
+        completed_count = sum(done for _, done in stages)
+        st.progress(completed_count / len(stages))
+        st.caption(f"{completed_count}/{len(stages)} stages completed")
+
+        for stage_name, is_complete in stages:
+            css_class = "process-complete" if is_complete else "process-pending"
+            icon = "✅" if is_complete else "⏳"
+            st.markdown(
+                f'<div class="{css_class}">{icon} {stage_name}</div>',
+                unsafe_allow_html=True,
+            )
+
+        st.divider()
+        st.subheader("📌 Current Trip")
+        st.write("Destination:", safe_text(state.get("destination"), "Not set"))
+        st.write(
+            "Dates:",
+            (
+                f"{safe_text(state.get('start_date'), 'Not set')} → "
+                f"{safe_text(state.get('end_date'), 'Not set')}"
+            ),
+        )
+        st.write("People:", state.get("number_of_people") or "Not set")
+        st.write("Budget:", f"INR {safe_money(state.get('budget'))}")
+
+        if state.get("missing_fields"):
+            st.markdown("#### ⚠️ Missing Details")
+            for missing_field in state["missing_fields"]:
+                st.write(f"• {safe_text(missing_field)}")
+
+        st.divider()
+        st.subheader("🧠 Long-Term Memory")
+
+        trips = state.get("previous_trips", [])
+        memories = state.get("retrieved_memories", [])
+        chats = state.get("chat_history_db", [])
+
+        metric_1, metric_2, metric_3 = st.columns(3)
+        metric_1.metric("Trips", len(trips))
+        metric_2.metric("Memory", len(memories))
+        metric_3.metric("Chats", len(chats))
+
+        with st.expander("📍 Previous Trips"):
+            if not trips:
+                st.caption("No saved trips yet.")
+
+            for trip in trips[:10]:
+                if isinstance(trip, dict):
+                    destination = trip.get("destination", "Unknown")
+                    budget = trip.get("budget")
+                    duration = trip.get("duration")
+                    travel_style = trip.get("travel_style")
+                elif isinstance(trip, (list, tuple)):
+                    destination = trip[0] if len(trip) > 0 else "Unknown"
+                    budget = trip[1] if len(trip) > 1 else None
+                    duration = trip[2] if len(trip) > 2 else None
+                    travel_style = trip[3] if len(trip) > 3 else None
+                else:
+                    continue
+
+                st.markdown(
+                    f"""
+                    <div class="memory-card">
+                        <strong>{html.escape(safe_text(destination))}</strong><br>
+                        Budget: INR {safe_money(budget)}<br>
+                        Duration: {safe_text(duration, 'N/A')} days<br>
+                        Style: {html.escape(safe_text(travel_style, 'Not specified'))}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        with st.expander("💭 Learned Preferences"):
+            unique_memories = list(dict.fromkeys(memories))
+
+            if not unique_memories:
+                st.caption("No learned preferences yet.")
+
+            for memory in unique_memories[:15]:
+                st.write(f"• {safe_text(memory)}")
+
+        with st.expander("💬 Recent Chats"):
+            normalized_chats = normalize_chat_rows(chats)
+
+            if not normalized_chats:
+                st.caption("No stored conversations yet.")
+
+            for message in normalized_chats[-10:]:
+                preview = safe_text(message["content"])
+                if len(preview) > 110:
+                    preview = f"{preview[:110]}..."
+                st.caption(f"{message['role'].title()}: {preview}")
 
         st.divider()
 
-        st.subheader("📌 Current Details")
-
-        st.write("**Destination:**", safe_text(current_state.get("destination"), "Not set"))
-        st.write("**Origin:**", safe_text(current_state.get("origin"), "Not set"))
-        st.write("**Start Date:**", safe_text(current_state.get("start_date"), "Not set"))
-        st.write("**End Date:**", safe_text(current_state.get("end_date"), "Not set"))
-        st.write("**Month:**", safe_text(current_state.get("month"), "Not set"))
-        st.write("**Duration:**", f"{safe_text(current_state.get('duration'), 'Not set')} days")
-        st.write("**People:**", safe_text(current_state.get("number_of_people"), "Not set"))
-        st.write("**Budget:**", f"INR {safe_money(current_state.get('budget'))}")
-        st.write("**Travel Style:**", safe_text(current_state.get("travel_style"), "Not set"))
-
-        st.divider()
-
-        st.subheader("🌦️ Weather Status")
-
-        weather_info = current_state.get("weather_info", {})
-        current_weather = weather_info.get("current_weather", {})
-
-        if current_weather:
-            if current_weather.get("success"):
-                st.success("Weather data available.")
-                st.write("Condition:", safe_text(current_weather.get("description")))
-                st.write("Temperature:", f"{safe_text(current_weather.get('temperature_c'))} °C")
-                st.write("Humidity:", f"{safe_text(current_weather.get('humidity_percent'))}%")
-            else:
-                st.warning(safe_text(current_weather.get("error"), "Weather call failed."))
-        else:
-            st.info("Weather data not generated yet.")
-
-        st.divider()
-
-        if st.button("🔄 Reset Trip", use_container_width=True):
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.authenticated = False
+            st.session_state.logged_in_user = None
             st.session_state.messages = []
             st.session_state.trip_state = TripState().model_dump()
+            st.session_state.pending_review = None
+            st.session_state.graph_thread_id = None
             st.rerun()
 
 
-# --------------------------------------------------
-# Renderer Functions
-# --------------------------------------------------
-def render_day_card(day):
-    day_name = safe_text(day.get("day", "Day"))
-    date = safe_text(day.get("date", "Date not specified"))
-    title = safe_text(day.get("title", "Trip Plan"))
+# ==================================================
+# Query and Human Review Forms
+# ==================================================
 
-    morning = safe_text(day.get("morning", "Morning plan not specified."))
-    afternoon = safe_text(day.get("afternoon", "Afternoon plan not specified."))
-    evening = safe_text(day.get("evening", "Evening plan not specified."))
-
-    notes = (
-        day.get("notes")
-        or day.get("note")
-        or day.get("important_notes")
-        or day.get("travel_notes")
-        or "Keep this day flexible based on weather, local traffic, and availability."
+def render_query_form():
+    st.markdown(
+        """
+        <div class="query-box">
+            <b>💬 Enter your trip request</b><br>
+            <span style="color: #64748b;">
+                Include destination, dates, travelers, and budget.
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    notes = safe_text(notes)
+    st.caption(
+        "Example: Plan a trip to Goa from 10 July 2026 to "
+        "14 July 2026 for a couple with budget 40000 INR."
+    )
 
+    with st.form("trip_query_form", clear_on_submit=True):
+        user_input = st.text_area(
+            "Trip request",
+            placeholder="Type your trip request here...",
+            height=120,
+            label_visibility="collapsed",
+        )
+        submitted = st.form_submit_button(
+            "🚀 Generate Trip Plan",
+            use_container_width=True,
+        )
+
+    if submitted:
+        cleaned_input = user_input.strip()
+        if not cleaned_input:
+            st.warning("Please type a trip request before generating the plan.")
+            return None
+        return cleaned_input
+
+    return None
+
+
+def render_budget_review(payload):
+    st.markdown(
+        """
+        <div class="review-box">
+            <h3>⚠️ Budget Review Required</h3>
+            <p>
+                The estimated trip cost exceeds your budget.
+                Choose how the workflow should continue.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    user_budget = payload.get("user_budget")
+    estimated_total = payload.get("estimated_total")
+
+    try:
+        excess_amount = int(estimated_total) - int(user_budget)
+    except (TypeError, ValueError):
+        excess_amount = None
+
+    metric_1, metric_2, metric_3 = st.columns(3)
+    metric_1.metric("Your Budget", f"INR {safe_money(user_budget)}")
+    metric_2.metric("Current Estimate", f"INR {safe_money(estimated_total)}")
+    metric_3.metric("Excess", f"INR {safe_money(excess_amount)}")
+
+    if payload.get("message"):
+        st.info(clean_display_text(payload["message"]))
+
+    approve_col, continue_col = st.columns(2)
+
+    with approve_col:
+        approve_replanning = st.button(
+            "✅ Approve Replanning",
+            use_container_width=True,
+        )
+
+    with continue_col:
+        continue_current = st.button(
+            "➡️ Continue Current Plan",
+            use_container_width=True,
+        )
+
+    default_budget = int(user_budget) if user_budget else 1
+
+    with st.form("updated_budget_form"):
+        new_budget = st.number_input(
+            "Or update your total budget",
+            min_value=1,
+            value=default_budget,
+            step=1000,
+        )
+        update_budget = st.form_submit_button(
+            "Update Budget and Recalculate",
+            use_container_width=True,
+        )
+
+    if approve_replanning:
+        return {"action": "approve_replan"}
+
+    if continue_current:
+        return {"action": "continue_current"}
+
+    if update_budget:
+        return {
+            "action": "update_budget",
+            "new_budget": int(new_budget),
+        }
+
+    return None
+
+
+# ==================================================
+# Result Rendering
+# ==================================================
+
+def render_day_card(day):
     with st.container(border=True):
         st.markdown(
-            f"<div class='day-heading'>{day_name}: {title}</div>",
-            unsafe_allow_html=True,
+            f"### {safe_text(day.get('day'), 'Day')}: "
+            f"{safe_text(day.get('title'), 'Trip Plan')}"
         )
-        st.markdown(
-            f"<div class='small-muted'>📅 Date: {date}</div>",
-            unsafe_allow_html=True,
-        )
+        st.caption(f"📅 {safe_text(day.get('date'), 'Date not specified')}")
 
         st.markdown("#### 🌅 Morning")
-        st.write(morning)
+        st.write(safe_text(day.get("morning"), "Morning plan not specified."))
 
         st.markdown("#### ☀️ Afternoon")
-        st.write(afternoon)
+        st.write(safe_text(day.get("afternoon"), "Afternoon plan not specified."))
 
         st.markdown("#### 🌙 Evening")
-        st.write(evening)
+        st.write(safe_text(day.get("evening"), "Evening plan not specified."))
+
+        notes = safe_text(
+            day.get("notes"),
+            "Keep the day flexible based on weather and availability.",
+        )
+
+        technical_phrases = [
+            "fallback day plan",
+            "llm response was unavailable",
+            "llm response was invalid",
+            "generated because the llm",
+        ]
+
+        if any(phrase in notes.lower() for phrase in technical_phrases):
+            notes = (
+                "Keep this day flexible based on weather, local traffic, "
+                "opening hours, and personal energy levels."
+            )
 
         st.markdown("#### 📝 Notes")
         st.info(notes)
 
 
-def render_current_weather(weather_info):
-    current_weather = weather_info.get("current_weather", {})
+def render_replanned_summary(result):
+    revised_total = result.get("revised_estimated_total")
 
-    if not current_weather:
-        st.info("Current weather data is not available.")
+    if not revised_total:
         return
 
-    if not current_weather.get("success"):
-        st.warning(safe_text(current_weather.get("error"), "Weather call failed."))
-        return
+    original_total = result.get(
+        "original_budget_plan",
+        {},
+    ).get("estimated_total")
 
-    city = current_weather.get("city") or current_weather.get("location")
-    country = current_weather.get("country")
+    st.markdown(
+        """
+        <div class="replanned-box">
+            <h3>✅ Human-Approved Replanned Trip</h3>
+            <p>The updated budget and revised itinerary are shown below.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    wind_speed = current_weather.get("wind_speed") or current_weather.get("wind_speed_mps")
-    rain_1h = current_weather.get("rain_1h_mm") or current_weather.get("rain_last_1h_mm") or 0
+    metric_1, metric_2, metric_3 = st.columns(3)
+    metric_1.metric("Original Estimate", f"INR {safe_money(original_total)}")
+    metric_2.metric("Revised Estimate", f"INR {safe_money(revised_total)}")
+    metric_3.metric("Savings", f"INR {safe_money(result.get('savings_amount'))}")
 
-    c1, c2, c3 = st.columns(3)
+    for change in result.get("replan_changes", []):
+        st.write(f"• {safe_text(change)}")
 
-    with c1:
-        st.metric("Temperature", f"{current_weather.get('temperature_c')} °C")
-
-    with c2:
-        st.metric("Humidity", f"{current_weather.get('humidity_percent')}%")
-
-    with c3:
-        st.metric("Wind Speed", f"{wind_speed} m/s")
-
-    with st.container(border=True):
-        st.write("**Weather Source:**", safe_text(weather_info.get("weather_source")))
-        st.write("**API Used:**", safe_text(current_weather.get("api_used")))
-        st.write("**Location:**", f"{safe_text(city)}, {safe_text(country)}")
-        st.write("**Condition:**", safe_text(current_weather.get("description")))
-        st.write("**Feels Like:**", f"{safe_text(current_weather.get('feels_like_c'))} °C")
-        st.write("**Pressure:**", f"{safe_text(current_weather.get('pressure_hpa'))} hPa")
-        st.write("**Cloudiness:**", f"{safe_text(current_weather.get('cloudiness_percent'))}%")
-        st.write("**Rain Last 1h:**", f"{safe_text(rain_1h, 0)} mm")
+def format_label(key):
+    return str(key).replace("_", " ").strip().title()
 
 
-def render_forecast(weather_info):
-    forecast = weather_info.get("forecast", {})
+def render_value(value, currency=False):
+    if value is None or value == "":
+        return "Not available"
 
-    if not forecast:
-        st.info("Forecast data is not available.")
-        return
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
 
-    if not forecast.get("success"):
-        st.warning(safe_text(forecast.get("error"), "Forecast call failed."))
-        return
+    if currency and isinstance(value, (int, float)):
+        return f"INR {safe_money(value)}"
 
-    daily_forecast = forecast.get("daily_forecast") or forecast.get("daily_summary") or []
-
-    if not daily_forecast:
-        st.info("No forecast summary available.")
-        return
-
-    st.markdown("### 5-Day Forecast")
-
-    for day in daily_forecast:
-        probable_condition = (
-            day.get("probable_condition")
-            or day.get("dominant_condition")
-            or "Not available"
-        )
-
-        min_temp = day.get("min_temperature_c") or day.get("min_temp_c")
-        max_temp = day.get("max_temperature_c") or day.get("max_temp_c")
-        total_rain = day.get("total_rain_3h_mm") or day.get("total_rain_mm") or 0
-
-        with st.container(border=True):
-            st.write("**Date:**", safe_text(day.get("date")))
-            st.write("**Condition:**", safe_text(probable_condition))
-            st.write("**Min / Max Temp:**", f"{safe_text(min_temp)} °C / {safe_text(max_temp)} °C")
-            st.write("**Humidity:**", f"{safe_text(day.get('avg_humidity_percent'))}%")
-            st.write("**Rain Expected:**", safe_text(day.get("rain_expected")))
-            st.write("**Total Rain:**", f"{safe_text(total_rain, 0)} mm")
+    return safe_text(value)
 
 
-def render_weather_analysis(weather_info):
-    weather_analysis = weather_info.get("weather_analysis", {})
-
-    if not weather_analysis:
-        st.info("Weather analysis is not available.")
-        return
-
-    travel_advice = weather_analysis.get("travel_advice")
-
-    if travel_advice:
-        st.info(clean_display_text(travel_advice))
-
-
-def render_budget_details(result):
+def render_budget_panel(result):
     itinerary = result.get("itinerary", {})
     budget_plan = result.get("budget_plan", {})
 
-    st.subheader("Budget Summary")
+    st.subheader("💰 Budget Summary")
 
     budget_summary = itinerary.get("budget_summary")
 
     if budget_summary:
         st.write(clean_display_text(budget_summary))
-    else:
-        st.info("Budget summary from itinerary is not available.")
 
     if not budget_plan:
-        st.info("Budget plan is not available.")
+        st.info("Budget details are not available.")
         return
 
-    user_budget = budget_plan.get("user_budget", result.get("budget"))
-    estimated_total = budget_plan.get("estimated_total")
-    within_budget = budget_plan.get("within_budget")
+    user_budget = budget_plan.get(
+        "user_budget",
+        result.get("budget"),
+    )
 
-    c1, c2, c3 = st.columns(3)
+    estimated_total = budget_plan.get(
+        "estimated_total"
+    )
 
-    with c1:
-        st.metric("User Budget", f"INR {safe_money(user_budget)}")
-
-    with c2:
-        st.metric("Estimated Total", f"INR {safe_money(estimated_total)}")
-
-    with c3:
-        st.metric("Within Budget", str(within_budget))
-
-    explanation = budget_plan.get("calculation_explanation")
-
-    if explanation:
-        st.info(clean_display_text(explanation))
-
-    cost_breakdown = budget_plan.get("cost_breakdown", {})
-
-    if cost_breakdown:
-        with st.expander("View Cost Breakdown"):
-            st.json(cost_breakdown)
-
-    with st.expander("View Raw Budget Agent Output"):
-        st.json(budget_plan)
-
-
-def render_replanner_message(result):
-    replanner_message = result.get("replanner_message")
-
-    if replanner_message:
-        st.warning(clean_display_text(replanner_message))
-
-
-def render_structured_trip_plan(result):
-    missing_fields = result.get("missing_fields", [])
-
-    if missing_fields:
-        final_answer = result.get("final_answer", "Please provide the missing trip details.")
-
-        st.markdown(
-            """
-            <div class="missing-box">
-                <h3>⚠️ More details needed</h3>
-                <p>The assistant needs a few required values before generating the full trip plan.</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        st.warning(clean_display_text(final_answer))
-        return
-
-    itinerary = result.get("itinerary", {})
-    final_answer = result.get("final_answer", "")
-
-    if not itinerary:
-        if final_answer:
-            st.write(clean_display_text(final_answer))
-        else:
-            st.warning("No itinerary was generated.")
-        return
-
-    trip_summary = itinerary.get("trip_summary", "")
-    day_wise_plan = itinerary.get("day_wise_plan", [])
-
-    if trip_summary:
-        st.markdown(
-            f"""
-            <div class="summary-box">
-                <h3>📌 Trip Summary</h3>
-                <p>{clean_display_text(trip_summary)}</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    within_budget = budget_plan.get(
+        "within_budget"
+    )
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.metric("Destination", safe_text(result.get("destination"), "Not set"))
+        st.metric(
+            "User Budget",
+            f"INR {safe_money(user_budget)}",
+        )
 
     with col2:
-        st.metric("Duration", f"{safe_text(result.get('duration'), 'N/A')} days")
+        st.metric(
+            "Estimated Total",
+            f"INR {safe_money(estimated_total)}",
+        )
 
     with col3:
-        st.metric("Budget", f"INR {safe_money(result.get('budget'))}")
+        if within_budget is True:
+            budget_status = "Within Budget"
+        elif within_budget is False:
+            budget_status = "Over Budget"
+        else:
+            budget_status = "Not Determined"
+
+        st.metric(
+            "Budget Status",
+            budget_status,
+        )
+
+    explanation = budget_plan.get(
+        "calculation_explanation"
+    )
+
+    if explanation:
+        st.info(
+            clean_display_text(explanation)
+        )
+
+    cost_breakdown = budget_plan.get(
+        "cost_breakdown",
+        {},
+    )
+
+    if cost_breakdown:
+        st.markdown("### Cost Breakdown")
+
+        currency_keywords = [
+            "cost",
+            "budget",
+            "total",
+            "stay",
+            "hotel",
+            "accommodation",
+            "food",
+            "transport",
+            "activity",
+            "activities",
+            "buffer",
+            "miscellaneous",
+        ]
+
+        for key, value in cost_breakdown.items():
+            is_currency = any(
+                keyword in str(key).lower()
+                for keyword in currency_keywords
+            )
+
+            col_label, col_value = st.columns([2, 1])
+
+            with col_label:
+                st.write(
+                    f"**{format_label(key)}**"
+                )
+
+            with col_value:
+                if is_currency and isinstance(
+                    value,
+                    (int, float),
+                ):
+                    st.write(
+                        f"INR {safe_money(value)}"
+                    )
+                else:
+                    st.write(
+                        render_value(value)
+                    )
+
+    revised_total = result.get(
+        "revised_estimated_total"
+    )
+
+    if revised_total:
+        st.divider()
+        st.markdown("### Replanning Result")
+
+        original_total = result.get(
+            "original_budget_plan",
+            {},
+        ).get("estimated_total")
+
+        savings_amount = result.get(
+            "savings_amount"
+        )
+
+        r1, r2, r3 = st.columns(3)
+
+        with r1:
+            st.metric(
+                "Original Estimate",
+                f"INR {safe_money(original_total)}",
+            )
+
+        with r2:
+            st.metric(
+                "Revised Estimate",
+                f"INR {safe_money(revised_total)}",
+            )
+
+        with r3:
+            st.metric(
+                "Total Savings",
+                f"INR {safe_money(savings_amount)}",
+            )
+
+        replan_changes = result.get(
+            "replan_changes",
+            [],
+        )
+
+        if replan_changes:
+            st.markdown("#### Changes Made")
+
+            for change in replan_changes:
+                st.write(
+                    f"• {clean_display_text(change)}"
+                )
+
+
+def render_weather_panel(result):
+    itinerary = result.get("itinerary", {})
+    weather_info = result.get("weather_info", {})
+
+    st.subheader("🌦️ Weather Overview")
+
+    weather_notes = itinerary.get(
+        "weather_notes"
+    )
+
+    if weather_notes:
+        st.write(
+            clean_display_text(weather_notes)
+        )
+
+    if not weather_info:
+        st.info("Weather information is not available.")
+        return
+
+    current_weather = weather_info.get(
+        "current_weather",
+        {},
+    )
+
+    if current_weather:
+        if current_weather.get("success") is False:
+            st.warning(
+                safe_text(
+                    current_weather.get("error"),
+                    "The weather request was unsuccessful.",
+                )
+            )
+        else:
+            temperature = current_weather.get(
+                "temperature_c"
+            )
+
+            humidity = current_weather.get(
+                "humidity_percent"
+            )
+
+            wind_speed = (
+                current_weather.get("wind_speed")
+                or current_weather.get(
+                    "wind_speed_mps"
+                )
+            )
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric(
+                    "Temperature",
+                    (
+                        f"{temperature} °C"
+                        if temperature is not None
+                        else "N/A"
+                    ),
+                )
+
+            with col2:
+                st.metric(
+                    "Humidity",
+                    (
+                        f"{humidity}%"
+                        if humidity is not None
+                        else "N/A"
+                    ),
+                )
+
+            with col3:
+                st.metric(
+                    "Wind Speed",
+                    (
+                        f"{wind_speed} m/s"
+                        if wind_speed is not None
+                        else "N/A"
+                    ),
+                )
+
+            city = (
+                current_weather.get("city")
+                or current_weather.get("location")
+            )
+
+            country = current_weather.get(
+                "country"
+            )
+
+            description = current_weather.get(
+                "description"
+            )
+
+            feels_like = current_weather.get(
+                "feels_like_c"
+            )
+
+            pressure = current_weather.get(
+                "pressure_hpa"
+            )
+
+            cloudiness = current_weather.get(
+                "cloudiness_percent"
+            )
+
+            with st.container(border=True):
+                if city or country:
+                    location_text = ", ".join(
+                        part
+                        for part in [city, country]
+                        if part
+                    )
+
+                    st.write(
+                        "**Location:**",
+                        location_text,
+                    )
+
+                st.write(
+                    "**Condition:**",
+                    safe_text(description),
+                )
+
+                st.write(
+                    "**Feels Like:**",
+                    (
+                        f"{feels_like} °C"
+                        if feels_like is not None
+                        else "Not available"
+                    ),
+                )
+
+                st.write(
+                    "**Pressure:**",
+                    (
+                        f"{pressure} hPa"
+                        if pressure is not None
+                        else "Not available"
+                    ),
+                )
+
+                st.write(
+                    "**Cloudiness:**",
+                    (
+                        f"{cloudiness}%"
+                        if cloudiness is not None
+                        else "Not available"
+                    ),
+                )
+
+    weather_analysis = weather_info.get(
+        "weather_analysis",
+        {},
+    )
+
+    if weather_analysis:
+        travel_advice = weather_analysis.get(
+            "travel_advice"
+        )
+
+        if travel_advice:
+            st.markdown("### Travel Advice")
+            st.info(
+                clean_display_text(travel_advice)
+            )
+
+    forecast = weather_info.get(
+        "forecast",
+        {},
+    )
+
+    if not forecast:
+        return
+
+    if forecast.get("success") is False:
+        st.warning(
+            safe_text(
+                forecast.get("error"),
+                "Forecast information could not be retrieved.",
+            )
+        )
+        return
+
+    daily_forecast = (
+        forecast.get("daily_forecast")
+        or forecast.get("daily_summary")
+        or []
+    )
+
+    if not daily_forecast:
+        return
+
+    st.markdown("### Forecast")
+
+    for forecast_day in daily_forecast:
+        date = safe_text(
+            forecast_day.get("date"),
+            "Date not available",
+        )
+
+        condition = (
+            forecast_day.get(
+                "probable_condition"
+            )
+            or forecast_day.get(
+                "dominant_condition"
+            )
+            or "Not available"
+        )
+
+        min_temperature = (
+            forecast_day.get(
+                "min_temperature_c"
+            )
+            or forecast_day.get(
+                "min_temp_c"
+            )
+        )
+
+        max_temperature = (
+            forecast_day.get(
+                "max_temperature_c"
+            )
+            or forecast_day.get(
+                "max_temp_c"
+            )
+        )
+
+        humidity = forecast_day.get(
+            "avg_humidity_percent"
+        )
+
+        rain_expected = forecast_day.get(
+            "rain_expected"
+        )
+
+        with st.container(border=True):
+            st.markdown(f"#### 📅 {date}")
+
+            forecast_col1, forecast_col2 = (
+                st.columns(2)
+            )
+
+            with forecast_col1:
+                st.write(
+                    "**Condition:**",
+                    safe_text(condition),
+                )
+
+                st.write(
+                    "**Temperature:**",
+                    (
+                        f"{min_temperature} °C – "
+                        f"{max_temperature} °C"
+                        if (
+                            min_temperature is not None
+                            and max_temperature is not None
+                        )
+                        else "Not available"
+                    ),
+                )
+
+            with forecast_col2:
+                st.write(
+                    "**Average Humidity:**",
+                    (
+                        f"{humidity}%"
+                        if humidity is not None
+                        else "Not available"
+                    ),
+                )
+
+                st.write(
+                    "**Rain Expected:**",
+                    render_value(rain_expected),
+                )
+
+
+def render_transport_panel(result):
+    itinerary = result.get("itinerary", {})
+    transport_plan = result.get(
+        "transport_plan",
+        {},
+    )
+
+    st.subheader("🚗 Transport Plan")
+
+    transport_notes = itinerary.get(
+        "transport_notes"
+    )
+
+    if transport_notes:
+        st.write(
+            clean_display_text(transport_notes)
+        )
+
+    if not transport_plan:
+        st.info("Transport details are not available.")
+        return
+
+    priority_fields = [
+        "recommended_transport",
+        "transport_mode",
+        "primary_transport",
+        "local_transport",
+        "airport_transfer",
+        "estimated_transport_cost",
+        "transport_cost",
+        "travel_time",
+        "reasoning",
+        "recommendation",
+    ]
+
+    displayed_keys = set()
+
+    for key in priority_fields:
+        if key not in transport_plan:
+            continue
+
+        value = transport_plan.get(key)
+
+        if value in [None, "", [], {}]:
+            continue
+
+        displayed_keys.add(key)
+
+        st.markdown(
+            f"### {format_label(key)}"
+        )
+
+        if isinstance(value, list):
+            for item in value:
+                st.write(
+                    f"• {clean_display_text(item)}"
+                )
+
+        elif isinstance(value, dict):
+            with st.container(border=True):
+                for sub_key, sub_value in value.items():
+                    st.write(
+                        f"**{format_label(sub_key)}:** "
+                        f"{render_value(sub_value)}"
+                    )
+
+        elif (
+            "cost" in key.lower()
+            and isinstance(value, (int, float))
+        ):
+            st.write(
+                f"INR {safe_money(value)}"
+            )
+
+        else:
+            st.write(
+                clean_display_text(value)
+            )
+
+    remaining_items = {
+        key: value
+        for key, value in transport_plan.items()
+        if (
+            key not in displayed_keys
+            and value not in [None, "", [], {}]
+        )
+    }
+
+    if remaining_items:
+        st.markdown("### Additional Transport Details")
+
+        for key, value in remaining_items.items():
+            with st.container(border=True):
+                st.markdown(
+                    f"#### {format_label(key)}"
+                )
+
+                if isinstance(value, list):
+                    for item in value:
+                        st.write(
+                            f"• {clean_display_text(item)}"
+                        )
+
+                elif isinstance(value, dict):
+                    for sub_key, sub_value in value.items():
+                        st.write(
+                            f"**{format_label(sub_key)}:** "
+                            f"{render_value(sub_value)}"
+                        )
+
+                else:
+                    st.write(
+                        render_value(value)
+                    )
+def render_structured_trip_plan(result):
+    if result.get("missing_fields"):
+        st.warning(clean_display_text(result.get("final_answer")))
+        return
+
+    itinerary = result.get("itinerary", {})
+
+    if not itinerary:
+        if not result.get("human_review_required"):
+            st.warning("No itinerary was generated.")
+        return
+
+    render_replanned_summary(result)
+
+    st.subheader("📌 Trip Summary")
+    st.success(safe_text(itinerary.get("trip_summary"), "Trip summary unavailable."))
+
+    metric_1, metric_2, metric_3 = st.columns(3)
+    metric_1.metric("Destination", safe_text(result.get("destination"), "Not set"))
+    metric_2.metric("Duration", f"{safe_text(result.get('duration'), 'N/A')} days")
+    metric_3.metric("Budget", f"INR {safe_money(result.get('budget'))}")
 
     st.divider()
+    st.subheader("🗓️ Day-wise Itinerary")
 
-    if day_wise_plan:
-        st.subheader("🗓️ Day-wise Itinerary")
+    for day in itinerary.get("day_wise_plan", []):
+        render_day_card(day)
 
-        for day in day_wise_plan:
-            render_day_card(day)
-    else:
-        st.write(clean_display_text(final_answer))
-
-    st.divider()
-
-    tab1, tab2, tab3, tab4 = st.tabs(
+    budget_tab, weather_tab, transport_tab, tradeoff_tab = st.tabs(
         ["💰 Budget", "🌦️ Weather", "🚗 Transport", "🔁 Tradeoffs"]
     )
 
-    with tab1:
-        render_budget_details(result)
+    with budget_tab:
+        render_budget_panel(result)
 
-    with tab2:
-        st.subheader("Weather Notes")
-        st.write(clean_display_text(itinerary.get("weather_notes", "Weather notes not available.")))
+    with weather_tab:
+        render_weather_panel(result)
 
-        weather_info = result.get("weather_info", {})
+    with transport_tab:
+        render_transport_panel(result)
 
-        if weather_info:
-            st.write("### Current Weather")
-            render_current_weather(weather_info)
+    with tradeoff_tab:
+        st.subheader("🔁 Tradeoffs and Replanning")
 
-            st.divider()
-
-            render_weather_analysis(weather_info)
-
-            st.divider()
-
-            render_forecast(weather_info)
-
-            with st.expander("View Raw Weather Output"):
-                st.json(weather_info)
-        else:
-            st.info("Weather information is not available.")
-
-    with tab3:
-        st.subheader("Transport Notes")
-        st.write(clean_display_text(itinerary.get("transport_notes", "Transport notes not available.")))
-
-        transport_plan = result.get("transport_plan", {})
-
-        if transport_plan:
-            with st.expander("View Transport Plan"):
-                st.json(transport_plan)
-        else:
-            st.info("Transport plan is not available.")
-
-    with tab4:
-        st.subheader("Tradeoffs Made")
-
-        tradeoffs = itinerary.get("tradeoffs_made", [])
+        tradeoffs = itinerary.get(
+        "tradeoffs_made",
+        [],
+        )
 
         if tradeoffs:
             for tradeoff in tradeoffs:
-                st.markdown(f"- {clean_display_text(tradeoff)}")
+                st.write(
+                f"• {clean_display_text(tradeoff)}"
+                )
         else:
-            st.markdown("- No major tradeoffs required.")
+            st.info(
+            "No major tradeoffs were required."
+            )
 
-        render_replanner_message(result)
+        replan_changes = result.get(
+        "replan_changes",
+        [],
+        )
+
+        if replan_changes:
+            st.markdown("### Replanning Changes")
+
+            for change in replan_changes:
+                st.write(
+                f"• {clean_display_text(change)}"
+                )
+
+        replanner_message = result.get(
+        "replanner_message"
+        )
+
+        if replanner_message:
+            st.info(
+                clean_display_text(
+                replanner_message
+                )
+            )
 
     st.divider()
-
     st.subheader("✅ Final Recommendation")
-    st.write(clean_display_text(itinerary.get("final_recommendation", "No final recommendation available.")))
-
-    render_replanner_message(result)
+    st.write(
+        safe_text(
+            itinerary.get("final_recommendation"),
+            "Final recommendation unavailable.",
+        )
+    )
 
 
 def render_chat_history():
+    if not st.session_state.messages:
+        return
+
+    st.subheader("💬 Conversation History")
+
     for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.write(clean_display_text(message["content"]))
+        with st.chat_message(message.get("role", "assistant")):
+            st.write(clean_display_text(message.get("content", "")))
 
 
-# --------------------------------------------------
-# Main UI
-# --------------------------------------------------
+# ==================================================
+# Graph Execution
+# ==================================================
+
+def start_trip_graph(user_input):
+    create_fresh_trip_state(preserve_memory=True)
+
+    user_id = st.session_state.logged_in_user
+    st.session_state.graph_thread_id = f"{user_id}-{uuid.uuid4()}"
+
+    state = st.session_state.trip_state
+    state["user_id"] = user_id
+    state["raw_user_input"] = user_input
+    state["conversation_history"] = [
+        {
+            "role": "user",
+            "content": user_input,
+        }
+    ]
+
+    user_message = {
+        "role": "user",
+        "content": user_input,
+    }
+
+    st.session_state.messages.append(user_message)
+
+    save_chat_message(
+        user_id=user_id,
+        role="user",
+        message=user_input,
+    )
+
+    result = trip_graph.invoke(
+        state,
+        config=get_graph_config(),
+    )
+
+    result = state_to_dict(result)
+    st.session_state.trip_state.update(result)
+
+    interrupt_payload = extract_interrupt(result)
+
+    if interrupt_payload:
+        st.session_state.pending_review = interrupt_payload
+        return
+
+    st.session_state.pending_review = None
+    persist_assistant_result(user_id, st.session_state.trip_state)
+
+
+def resume_trip_graph(decision):
+    result = trip_graph.invoke(
+        Command(resume=decision),
+        config=get_graph_config(),
+    )
+
+    result = state_to_dict(result)
+    st.session_state.trip_state.update(result)
+
+    interrupt_payload = extract_interrupt(result)
+
+    if interrupt_payload:
+        st.session_state.pending_review = interrupt_payload
+        return
+
+    st.session_state.pending_review = None
+    persist_assistant_result(
+        st.session_state.logged_in_user,
+        st.session_state.trip_state,
+    )
+
+
+# ==================================================
+# Main Application
+# ==================================================
+
+if not st.session_state.authenticated:
+    render_login_screen()
+    st.stop()
+
+current_user = st.session_state.logged_in_user
+
+if st.session_state.trip_state.get("user_id") != current_user:
+    create_fresh_trip_state(preserve_memory=False)
+    st.session_state.trip_state["user_id"] = current_user
+    load_user_data(current_user, load_messages=True)
+
 render_header()
 render_sidebar()
-render_chat_history()
 
-user_input = st.chat_input(
-    "Example: Plan a trip to Goa from 10 July 2026 to 14 July 2026 for a couple with budget 40000 INR"
-)
+if st.session_state.pending_review:
+    decision = render_budget_review(st.session_state.pending_review)
 
-if user_input:
-    st.session_state.messages.append(
-        {
-            "role": "user",
-            "content": user_input,
-        }
-    )
+    if decision:
+        with st.spinner("Continuing the workflow with your decision..."):
+            resume_trip_graph(decision)
+        st.rerun()
+else:
+    user_input = render_query_form()
 
-    with st.chat_message("user"):
-        st.write(user_input)
-
-    reset_trip_data_for_new_query()
-
-    st.session_state.trip_state["raw_user_input"] = user_input
-    st.session_state.trip_state.setdefault("conversation_history", [])
-
-    st.session_state.trip_state["conversation_history"].append(
-        {
-            "role": "user",
-            "content": user_input,
-        }
-    )
-
-    with st.chat_message("assistant"):
+    if user_input:
         with st.spinner("Multi-agent planner is preparing your trip..."):
-            try:
-                graph_result = trip_graph.invoke(st.session_state.trip_state)
+            start_trip_graph(user_input)
+        st.rerun()
 
-                graph_result = state_to_dict(graph_result)
+if (
+    st.session_state.trip_state.get("itinerary")
+    or st.session_state.trip_state.get("missing_fields")
+):
+    render_structured_trip_plan(st.session_state.trip_state)
 
-                st.session_state.trip_state.update(graph_result)
-
-                merged_result = st.session_state.trip_state
-
-                render_structured_trip_plan(merged_result)
-
-                final_answer = merged_result.get(
-                    "final_answer",
-                    "Trip plan generated successfully.",
-                )
-
-                if not final_answer:
-                    final_answer = "Trip plan generated successfully."
-
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": final_answer,
-                    }
-                )
-
-                st.session_state.trip_state["conversation_history"].append(
-                    {
-                        "role": "assistant",
-                        "content": final_answer,
-                    }
-                )
-
-            except Exception as e:
-                error_message = f"Something went wrong: {str(e)}"
-                st.error(error_message)
-
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": error_message,
-                    }
-                )
+render_chat_history()

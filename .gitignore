@@ -9,6 +9,9 @@ trip_env/
 venv/
 .venv/
 
+
+memory/memory.db
 .DS_Store
 .idea/
 .vscode/
+.streamlit/secrets.toml

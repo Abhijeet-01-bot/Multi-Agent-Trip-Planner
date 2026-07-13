@@ -225,9 +225,11 @@ def build_fallback_itinerary(state: Dict[str, Any]) -> Dict[str, Any]:
                     "based on the destination and weather conditions."
                 ),
                 "notes": (
-                    "This fallback day plan was generated because the LLM response "
-                    "was unavailable or invalid. Weather and budget constraints should "
-                    "still be considered while finalizing bookings."
+                    
+    "Keep this day flexible based on weather, local traffic, opening hours, "
+    "and personal energy levels. Confirm activity timings before visiting."
+
+
                 ),
             }
         )

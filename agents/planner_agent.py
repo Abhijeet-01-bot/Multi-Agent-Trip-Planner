@@ -229,6 +229,15 @@ def fallback_planner_output(state):
 
 
 def planner_agent(state):
+    previous_trips = state.get(
+    "previous_trips",
+    [],
+)
+
+    retrieved_memories = state.get(
+    "retrieved_memories",
+    [],
+)
     state = state_to_dict(state)
 
     logger.info("Planner Agent executed")
@@ -242,6 +251,12 @@ Extract structured trip details from the user request.
 
 User request:
 {raw_user_input}
+
+User Memory:
+{retrieved_memories}
+
+User Previous Trips:
+{previous_trips}
 
 Return ONLY valid JSON with this exact structure:
 
